@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>RehabMole VR — Physiotherapy</title>
+  <script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
+  <style>
+    body { margin: 0; font-family: monospace; background: #000; }
+
+    #ui {
+      position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+      z-index: 999; text-align: center; pointer-events: none;
+    }
+    #score-box {
+      font-size: 24px; color: #00ff88; background: rgba(0,0,0,0.75);
+      padding: 7px 26px; border: 2px solid #00ff88; letter-spacing: 4px;
+    }
+    #timer-box {
+      font-size: 16px; color: #ff6644; background: rgba(0,0,0,0.75);
+      padding: 4px 16px; border: 1px solid #ff6644; margin-top: 4px; letter-spacing: 2px;
+    }
+    #timer-box.urgent { color: #ff1111 !important; border-color: #ff1111; }
+
+    /* Gaze progress ring shown below crosshair */
+    #gaze-bar {
+      position: fixed; bottom: 56px; left: 50%; transform: translateX(-50%);
+      z-index: 999; text-align: center; pointer-events: none;
+    }
+    #gaze-label {
+      font-size: 11px; color: #555; letter-spacing: 2px; margin-bottom: 4px;
+    }
+    #gaze-track {
+      width: 200px; height: 10px; background: rgba(255,255,255,0.07);
+      border: 1px solid #333; border-radius: 6px; overflow: hidden;
+    }
+    #gaze-fill {
+      height: 100%; width: 0%; border-radius: 6px;
+      background: #00ff88; transition: width 0.05s, background 0.1s;
+    }
+    #gaze-fill.primed { background: #ffcc00; }
+    #gaze-fill.fired  { background: #ff4444; }
+
+    /* Rehab stats */
+    #stats-panel {
+      position: fixed; top: 16px; right: 16px; z-index: 999;
+      background: rgba(0,0,0,0.75); border: 1px solid #333;
+      padding: 10px 14px; font-size: 11px; color: #555;
+      letter-spacing: 1px; line-height: 2.2; pointer-events: none;
+    }
+    #stats-panel b   { color: #777; }
+    #stats-panel .val { color: #00ff88; }
+
+    /* Overlays */
+    #overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.92);
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; z-index: 1000; font-family: monospace; color: #00ff88;
+    }
+    #overlay h1 {
+      font-size: 38px; letter-spacing: 6px;
+      text-shadow: 0 0 28px #00ff88; margin: 0 0 6px;
+    }
+    #overlay .sub { color: #666; font-size: 13px; margin: 3px 0; }
+    .badges {
+      display: flex; gap: 10px; flex-wrap: wrap;
+      justify-content: center; margin: 14px 0 8px;
+    }
+    .badge {
+      padding: 4px 14px; border-radius: 20px; font-size: 12px;
+      border: 1px solid; letter-spacing: 1px;
+    }
+    .badge.g { border-color: #00ff88; color: #00ff88; }
+    .badge.b { border-color: #44aaff; color: #44aaff; }
+    .badge.y { border-color: #ffcc44; color: #ffcc44; }
+    #overlay button {
+      margin-top: 20px; padding: 12px 38px; font-size: 18px;
+      font-family: monospace; background: transparent;
+      border: 2px solid #00ff88; color: #00ff88;
+      cursor: pointer; letter-spacing: 4px; text-transform: uppercase; transition: all 0.2s;
+    }
+    #overlay button:hover { background: #00ff88; color: #000; }
+    #overlay.gameover h1   { color: #ff6644; text-shadow: 0 0 28px #ff6644; }
+    #overlay.gameover button { border-color: #ff6644; color: #ff6644; }
+    #overlay.gameover button:hover { background: #ff6644; color: #000; }
+    #overlay.gameover .val { color: #00ff88; font-size: 22px; letter-spacing: 3px; }
+
+    .flash {
+      position: fixed; inset: 0; pointer-events: none; z-index: 997; opacity: 0; transition: opacity 0.1s;
+    }
+    #hit-flash  { background: radial-gradient(ellipse, rgba(0,255,136,0.4) 0%, transparent 65%); }
+    #miss-flash { background: radial-gradient(ellipse, rgba(255,60,60,0.3)  0%, transparent 65%); }
+
+    #tip {
+      position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+      font-size: 11px; color: #444; z-index: 999; pointer-events: none;
+      text-align: center; letter-spacing: 1px; white-space: nowrap;
+    }
+    #tip span { color: #666; }
+  </style>
+</head>
+<body>
+
+<div id="ui">
+  <div id="score-box">SCORE: <span id="score">0</span></div>
+  <div id="timer-box">TIME:  <span id="timer">30</span>s</div>
+</div>
+
+<!-- Rehab session stats -->
+<div id="stats-panel">
+  <b>HITS &nbsp;&nbsp;&nbsp;:</b> <span class="val" id="st-hits">0</span><br>
+  <b>MISSES &nbsp;:</b> <span class="val" id="st-miss">0</span><br>
+  <b>ACCURACY:</b> <span class="val" id="st-acc">—</span>
+</div>
+
+<!-- Gaze dwell bar -->
+<div id="gaze-bar">
+  <div id="gaze-label">👁 GAZE TO SELECT</div>
+  <div id="gaze-track"><div id="gaze-fill"></div></div>
+</div>
+
+<div id="hit-flash"  class="flash"></div>
+<div id="miss-flash" class="flash"></div>
+
+<div id="tip">
+  <span>GAZE / HOVER</span> over mole to whack &nbsp;|&nbsp;
+  <span>CLICK</span> also works &nbsp;|&nbsp;
+  <span>WASD</span> move
+</div>
+
+<div id="overlay">
+  <h1>🏥 REHABMOLE VR</h1>
+  <p class="sub">Physiotherapy Edition — Head Tracking + Gaze Selection</p>
+  <div class="badges">
+    <span class="badge g">👁 Gaze at mole to whack</span>
+    <span class="badge b">🖱 Click also works</span>
+    <span class="badge y">📊 Tracks hits &amp; accuracy</span>
+  </div>
+  <p class="sub" style="font-size:11px;color:#444;margin-top:6px;">
+    Move your head / cursor so the ring lands on a mole — it whacks after a short dwell
+  </p>
+  <button onclick="startGame()">START SESSION</button>
+</div>
+
+<a-scene vr-mode-ui="enabled: true" background="color: #06061a"
+  fog="type: exponential; color: #06061a; density: 0.025">
+
+  <a-entity id="rig" position="0 0 3.5">
+
+    <a-camera id="cam" look-controls="pointerLockEnabled: true"
+      wasd-controls="acceleration: 20" position="0 1.6 0">
+
+      <!--
+        fuse="true"        — auto-fires after dwelling on object
+        fuse-timeout="800" — 800 ms dwell time before whack fires
+        The ring fills up visually via A-Frame's built-in fuse animation.
+        We also keep click support as fallback.
+      -->
+      <a-cursor
+        id="cursor"
+        fuse="true"
+        fuse-timeout="800"
+        geometry="primitive: ring; radiusInner: 0.013; radiusOuter: 0.026"
+        material="color: #00ff88; shader: flat; opacity: 0.9"
+        animation__click="property: scale; startEvents: click;
+          from: 0.1 0.1 0.1; to: 1 1 1; dur: 150"
+        animation__fusing="property: scale; startEvents: fusing;
+          from: 1 1 1; to: 0.1 0.1 0.1; dur: 800"
+        animation__unfusing="property: scale; startEvents: mouseleave;
+          to: 1 1 1; dur: 150"
+        raycaster="objects: .mole; far: 25; interval: 50">
+      </a-cursor>
+    </a-camera>
+
+    <!-- VR controllers with laser pointer -->
+    <a-entity laser-controls="hand: left"
+      raycaster="objects: .mole; far: 25; showLine: true; lineColor: #00ff88; lineOpacity: 0.6"
+      id="lc"></a-entity>
+    <a-entity laser-controls="hand: right"
+      raycaster="objects: .mole; far: 25; showLine: true; lineColor: #00ff88; lineOpacity: 0.6"
+      id="rc"></a-entity>
+
+  </a-entity>
+
+  <!-- Sky & ground -->
+  <a-sky color="#03030f"></a-sky>
+  <a-circle position="0 0 0" rotation="-90 0 0" radius="12"
+    color="#152915" roughness="1" shadow="receive: true"></a-circle>
+  <a-torus position="0 0.01 0" rotation="-90 0 0" radius="3.5"
+    radius-tubular="0.04" color="#1e3d1e"></a-torus>
+  <a-torus position="0 0.01 0" rotation="-90 0 0" radius="6"
+    radius-tubular="0.04" color="#1e3d1e"></a-torus>
+  <a-torus position="0 0.01 0" rotation="-90 0 0" radius="9"
+    radius-tubular="0.04" color="#1e3d1e"></a-torus>
+
+  <a-sphere position="-20 28 -50" radius="4" color="#fffde0"></a-sphere>
+  <a-light type="point"       position="-20 28 -50" color="#fffde0" intensity="0.4" distance="200"></a-light>
+  <a-light type="ambient"     color="#223" intensity="0.7"></a-light>
+  <a-light type="directional" position="4 12 5" color="#aaccff" intensity="1.1" shadow="cast: true"></a-light>
+  <a-light type="point"       position="0 4 0"  color="#66ff99" intensity="0.5" distance="14"></a-light>
+
+  <!-- ══════════════════════════════════════
+       MOLE HOLES  3 × 3
+  ══════════════════════════════════════ -->
+
+  <!-- HOLE 0 -->
+  <a-cylinder position="-2.5 0.01 -1.5" radius="0.3" height="0.06" color="#080808"></a-cylinder>
+  <a-torus    position="-2.5 0.03 -1.5" rotation="-90 0 0" radius="0.3" radius-tubular="0.045" color="#4a2a10"></a-torus>
+  <a-entity id="m0" class="mole" position="-2.5 -0.6 -1.5" data-hole="0">
+    <a-cylinder radius="0.23" height="0.38" color="#8B4513" position="0 0 0"></a-cylinder>
+    <a-sphere   radius="0.21" color="#A0522D" position="0 0.29 0"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position="-0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position=" 0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position="-0.065 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position=" 0.095 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.058" color="#ff8888" position="0 0.28 0.2"></a-sphere>
+    <a-cylinder radius="0.27"  height="0.03"  color="#1a1a1a" position="0 0.45 0"></a-cylinder>
+    <a-cylinder radius="0.185" height="0.22"  color="#1a1a1a" position="0 0.57 0"></a-cylinder>
+    <a-cylinder radius="0.19"  height="0.042" color="#cc2222" position="0 0.47 0"></a-cylinder>
+  </a-entity>
+
+  <!-- HOLE 1 -->
+  <a-cylinder position="0 0.01 -1.5" radius="0.3" height="0.06" color="#080808"></a-cylinder>
+  <a-torus    position="0 0.03 -1.5" rotation="-90 0 0" radius="0.3" radius-tubular="0.045" color="#4a2a10"></a-torus>
+  <a-entity id="m1" class="mole" position="0 -0.6 -1.5" data-hole="1">
+    <a-cylinder radius="0.23" height="0.38" color="#8B4513" position="0 0 0"></a-cylinder>
+    <a-sphere   radius="0.21" color="#A0522D" position="0 0.29 0"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position="-0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position=" 0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position="-0.065 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position=" 0.095 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.058" color="#ff8888" position="0 0.28 0.2"></a-sphere>
+    <a-cylinder radius="0.27"  height="0.03"  color="#1a1a1a" position="0 0.45 0"></a-cylinder>
+    <a-cylinder radius="0.185" height="0.22"  color="#1a1a1a" position="0 0.57 0"></a-cylinder>
+    <a-cylinder radius="0.19"  height="0.042" color="#cc2222" position="0 0.47 0"></a-cylinder>
+  </a-entity>
+
+  <!-- HOLE 2 -->
+  <a-cylinder position="2.5 0.01 -1.5" radius="0.3" height="0.06" color="#080808"></a-cylinder>
+  <a-torus    position="2.5 0.03 -1.5" rotation="-90 0 0" radius="0.3" radius-tubular="0.045" color="#4a2a10"></a-torus>
+  <a-entity id="m2" class="mole" position="2.5 -0.6 -1.5" data-hole="2">
+    <a-cylinder radius="0.23" height="0.38" color="#8B4513" position="0 0 0"></a-cylinder>
+    <a-sphere   radius="0.21" color="#A0522D" position="0 0.29 0"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position="-0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position=" 0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position="-0.065 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position=" 0.095 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.058" color="#ff8888" position="0 0.28 0.2"></a-sphere>
+    <a-cylinder radius="0.27"  height="0.03"  color="#1a1a1a" position="0 0.45 0"></a-cylinder>
+    <a-cylinder radius="0.185" height="0.22"  color="#1a1a1a" position="0 0.57 0"></a-cylinder>
+    <a-cylinder radius="0.19"  height="0.042" color="#cc2222" position="0 0.47 0"></a-cylinder>
+  </a-entity>
+
+  <!-- HOLE 3 -->
+  <a-cylinder position="-2.5 0.01 0.2" radius="0.3" height="0.06" color="#080808"></a-cylinder>
+  <a-torus    position="-2.5 0.03 0.2" rotation="-90 0 0" radius="0.3" radius-tubular="0.045" color="#4a2a10"></a-torus>
+  <a-entity id="m3" class="mole" position="-2.5 -0.6 0.2" data-hole="3">
+    <a-cylinder radius="0.23" height="0.38" color="#8B4513" position="0 0 0"></a-cylinder>
+    <a-sphere   radius="0.21" color="#A0522D" position="0 0.29 0"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position="-0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position=" 0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position="-0.065 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position=" 0.095 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.058" color="#ff8888" position="0 0.28 0.2"></a-sphere>
+    <a-cylinder radius="0.27"  height="0.03"  color="#1a1a1a" position="0 0.45 0"></a-cylinder>
+    <a-cylinder radius="0.185" height="0.22"  color="#1a1a1a" position="0 0.57 0"></a-cylinder>
+    <a-cylinder radius="0.19"  height="0.042" color="#cc2222" position="0 0.47 0"></a-cylinder>
+  </a-entity>
+
+  <!-- HOLE 4 -->
+  <a-cylinder position="0 0.01 0.2" radius="0.3" height="0.06" color="#080808"></a-cylinder>
+  <a-torus    position="0 0.03 0.2" rotation="-90 0 0" radius="0.3" radius-tubular="0.045" color="#4a2a10"></a-torus>
+  <a-entity id="m4" class="mole" position="0 -0.6 0.2" data-hole="4">
+    <a-cylinder radius="0.23" height="0.38" color="#8B4513" position="0 0 0"></a-cylinder>
+    <a-sphere   radius="0.21" color="#A0522D" position="0 0.29 0"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position="-0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position=" 0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position="-0.065 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position=" 0.095 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.058" color="#ff8888" position="0 0.28 0.2"></a-sphere>
+    <a-cylinder radius="0.27"  height="0.03"  color="#1a1a1a" position="0 0.45 0"></a-cylinder>
+    <a-cylinder radius="0.185" height="0.22"  color="#1a1a1a" position="0 0.57 0"></a-cylinder>
+    <a-cylinder radius="0.19"  height="0.042" color="#cc2222" position="0 0.47 0"></a-cylinder>
+  </a-entity>
+
+  <!-- HOLE 5 -->
+  <a-cylinder position="2.5 0.01 0.2" radius="0.3" height="0.06" color="#080808"></a-cylinder>
+  <a-torus    position="2.5 0.03 0.2" rotation="-90 0 0" radius="0.3" radius-tubular="0.045" color="#4a2a10"></a-torus>
+  <a-entity id="m5" class="mole" position="2.5 -0.6 0.2" data-hole="5">
+    <a-cylinder radius="0.23" height="0.38" color="#8B4513" position="0 0 0"></a-cylinder>
+    <a-sphere   radius="0.21" color="#A0522D" position="0 0.29 0"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position="-0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position=" 0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position="-0.065 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position=" 0.095 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.058" color="#ff8888" position="0 0.28 0.2"></a-sphere>
+    <a-cylinder radius="0.27"  height="0.03"  color="#1a1a1a" position="0 0.45 0"></a-cylinder>
+    <a-cylinder radius="0.185" height="0.22"  color="#1a1a1a" position="0 0.57 0"></a-cylinder>
+    <a-cylinder radius="0.19"  height="0.042" color="#cc2222" position="0 0.47 0"></a-cylinder>
+  </a-entity>
+
+  <!-- HOLE 6 -->
+  <a-cylinder position="-2.5 0.01 1.9" radius="0.3" height="0.06" color="#080808"></a-cylinder>
+  <a-torus    position="-2.5 0.03 1.9" rotation="-90 0 0" radius="0.3" radius-tubular="0.045" color="#4a2a10"></a-torus>
+  <a-entity id="m6" class="mole" position="-2.5 -0.6 1.9" data-hole="6">
+    <a-cylinder radius="0.23" height="0.38" color="#8B4513" position="0 0 0"></a-cylinder>
+    <a-sphere   radius="0.21" color="#A0522D" position="0 0.29 0"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position="-0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position=" 0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position="-0.065 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position=" 0.095 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.058" color="#ff8888" position="0 0.28 0.2"></a-sphere>
+    <a-cylinder radius="0.27"  height="0.03"  color="#1a1a1a" position="0 0.45 0"></a-cylinder>
+    <a-cylinder radius="0.185" height="0.22"  color="#1a1a1a" position="0 0.57 0"></a-cylinder>
+    <a-cylinder radius="0.19"  height="0.042" color="#cc2222" position="0 0.47 0"></a-cylinder>
+  </a-entity>
+
+  <!-- HOLE 7 -->
+  <a-cylinder position="0 0.01 1.9" radius="0.3" height="0.06" color="#080808"></a-cylinder>
+  <a-torus    position="0 0.03 1.9" rotation="-90 0 0" radius="0.3" radius-tubular="0.045" color="#4a2a10"></a-torus>
+  <a-entity id="m7" class="mole" position="0 -0.6 1.9" data-hole="7">
+    <a-cylinder radius="0.23" height="0.38" color="#8B4513" position="0 0 0"></a-cylinder>
+    <a-sphere   radius="0.21" color="#A0522D" position="0 0.29 0"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position="-0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position=" 0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position="-0.065 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position=" 0.095 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.058" color="#ff8888" position="0 0.28 0.2"></a-sphere>
+    <a-cylinder radius="0.27"  height="0.03"  color="#1a1a1a" position="0 0.45 0"></a-cylinder>
+    <a-cylinder radius="0.185" height="0.22"  color="#1a1a1a" position="0 0.57 0"></a-cylinder>
+    <a-cylinder radius="0.19"  height="0.042" color="#cc2222" position="0 0.47 0"></a-cylinder>
+  </a-entity>
+
+  <!-- HOLE 8 -->
+  <a-cylinder position="2.5 0.01 1.9" radius="0.3" height="0.06" color="#080808"></a-cylinder>
+  <a-torus    position="2.5 0.03 1.9" rotation="-90 0 0" radius="0.3" radius-tubular="0.045" color="#4a2a10"></a-torus>
+  <a-entity id="m8" class="mole" position="2.5 -0.6 1.9" data-hole="8">
+    <a-cylinder radius="0.23" height="0.38" color="#8B4513" position="0 0 0"></a-cylinder>
+    <a-sphere   radius="0.21" color="#A0522D" position="0 0.29 0"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position="-0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.043" color="#111"   position=" 0.08 0.35 0.16"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position="-0.065 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.016" color="white"  position=" 0.095 0.362 0.19"></a-sphere>
+    <a-sphere   radius="0.058" color="#ff8888" position="0 0.28 0.2"></a-sphere>
+    <a-cylinder radius="0.27"  height="0.03"  color="#1a1a1a" position="0 0.45 0"></a-cylinder>
+    <a-cylinder radius="0.185" height="0.22"  color="#1a1a1a" position="0 0.57 0"></a-cylinder>
+    <a-cylinder radius="0.19"  height="0.042" color="#cc2222" position="0 0.47 0"></a-cylinder>
+  </a-entity>
+
+  <a-entity id="popups"></a-entity>
+
+</a-scene>
+
+<script>
+  const NUM  = 9;
+  const DWELL_MS = 800; // ms cursor must rest on mole before auto-whack
+
+  let score = 0, timeLeft = 30, active = false;
+  let timerInt = null, timeouts = [];
+  let statHits = 0, statMiss = 0;
+
+  // Per-mole dwell timer handles
+  const dwellTimers = Array(NUM).fill(null);
+
+  const POSITIONS = [
+    {x:-2.5, y:-0.6, z:-1.5}, {x:0, y:-0.6, z:-1.5}, {x:2.5, y:-0.6, z:-1.5},
+    {x:-2.5, y:-0.6, z: 0.2}, {x:0, y:-0.6, z: 0.2}, {x:2.5, y:-0.6, z: 0.2},
+    {x:-2.5, y:-0.6, z: 1.9}, {x:0, y:-0.6, z: 1.9}, {x:2.5, y:-0.6, z: 1.9},
+  ];
+  const up = Array(NUM).fill(false);
+
+  const scoreEl  = document.getElementById('score');
+  const timerEl  = document.getElementById('timer');
+  const timerBox = document.getElementById('timer-box');
+  const overlay  = document.getElementById('overlay');
+  const fillEl   = document.getElementById('gaze-fill');
+  const moleEl   = i => document.getElementById('m' + i);
+
+  // ── Helpers ────────────────────────────────────────────────
+  function flash(id) {
+    const el = document.getElementById(id);
+    el.style.opacity = '1';
+    setTimeout(() => el.style.opacity = '0', 150);
+  }
+
+  function popup(i, label, color) {
+    const p = POSITIONS[i];
+    const t = document.createElement('a-text');
+    t.setAttribute('value', label);
+    t.setAttribute('color', color);
+    t.setAttribute('align', 'center');
+    t.setAttribute('width', '3');
+    t.setAttribute('position', p.x + ' ' + (p.y + 1.7) + ' ' + p.z);
+    t.setAttribute('animation__p',
+      'property:position;to:' + p.x + ' ' + (p.y + 3) + ' ' + p.z + ';dur:650;easing:easeOutQuad');
+    t.setAttribute('animation__f',
+      'property:text.opacity;from:1;to:0;dur:650;easing:easeInQuad');
+    document.getElementById('popups').appendChild(t);
+    setTimeout(() => { try { t.parentNode.removeChild(t); } catch(e){} }, 700);
+  }
+
+  function updateStats() {
+    const total = statHits + statMiss;
+    document.getElementById('st-hits').textContent = statHits;
+    document.getElementById('st-miss').textContent = statMiss;
+    document.getElementById('st-acc').textContent  =
+      total > 0 ? Math.round(statHits / total * 100) + '%' : '—';
+  }
+
+  // ── Gaze bar animation (fills over DWELL_MS when gazing) ──
+  let gazeAnimFrame = null;
+  let gazeStart     = 0;
+
+  function startGazeBar() {
+    gazeStart = Date.now();
+    fillEl.className = '';
+    function tick() {
+      const pct = Math.min(100, (Date.now() - gazeStart) / DWELL_MS * 100);
+      fillEl.style.width = pct + '%';
+      fillEl.className = pct > 66 ? 'primed' : '';
+      if (pct < 100) gazeAnimFrame = requestAnimationFrame(tick);
+      else { fillEl.className = 'fired'; }
+    }
+    gazeAnimFrame = requestAnimationFrame(tick);
+  }
+
+  function stopGazeBar() {
+    if (gazeAnimFrame) cancelAnimationFrame(gazeAnimFrame);
+    fillEl.style.width = '0%';
+    fillEl.className = '';
+  }
+
+  // ── Mole raise / lower ─────────────────────────────────────
+  function raise(i) {
+    if (!active || up[i]) return;
+    up[i] = true;
+    const p = POSITIONS[i];
+    moleEl(i).setAttribute('animation__up',
+      'property:position;to:' + p.x + ' ' + (p.y + 0.66) + ' ' + p.z +
+      ';dur:180;easing:easeOutBack');
+    const stay = Math.max(600, 1500 - (30 - timeLeft) * 30 + Math.random() * 800);
+    timeouts.push(setTimeout(() => { if (up[i]) lower(i); }, stay));
+  }
+
+  function lower(i, instant) {
+    up[i] = false;
+    clearDwell(i);
+    const p  = POSITIONS[i];
+    const el = moleEl(i);
+    if (instant) {
+      ['animation__up','animation__down','animation__whack'].forEach(a => el.removeAttribute(a));
+      el.setAttribute('position', p.x + ' ' + p.y + ' ' + p.z);
+    } else {
+      el.setAttribute('animation__down',
+        'property:position;to:' + p.x + ' ' + p.y + ' ' + p.z + ';dur:120;easing:easeInQuad');
+    }
+  }
+
+  function schedule() {
+    if (!active) return;
+    const upCount = up.filter(Boolean).length;
+    const maxUp   = Math.min(4, 1 + Math.floor((30 - timeLeft) / 7));
+    if (upCount < maxUp) {
+      const down = up.map((v, i) => v ? -1 : i).filter(i => i >= 0);
+      if (down.length) raise(down[Math.floor(Math.random() * down.length)]);
+    }
+    const delay = Math.max(280, 700 - (30 - timeLeft) * 10 + Math.random() * 600);
+    timeouts.push(setTimeout(schedule, delay));
+  }
+
+  // ── WHACK ──────────────────────────────────────────────────
+  function whack(i) {
+    if (!active || !up[i]) return;
+    score += 10;
+    up[i] = false;
+    statHits++;
+    scoreEl.textContent = score;
+    updateStats();
+    stopGazeBar();
+    clearDwell(i);
+
+    const p = POSITIONS[i];
+    moleEl(i).setAttribute('animation__whack',
+      'property:position;to:' + p.x + ' ' + p.y + ' ' + p.z + ';dur:85;easing:easeInQuad');
+    flash('hit-flash');
+    popup(i, '+10', '#00ff88');
+  }
+
+  // ── Dwell (gaze hold) timers ───────────────────────────────
+  function startDwell(i) {
+    if (!active || !up[i]) return;
+    clearDwell(i);
+    startGazeBar();
+    dwellTimers[i] = setTimeout(() => whack(i), DWELL_MS);
+  }
+
+  function clearDwell(i) {
+    if (dwellTimers[i]) { clearTimeout(dwellTimers[i]); dwellTimers[i] = null; }
+  }
+
+  // ── Wire up each mole ──────────────────────────────────────
+  for (let i = 0; i < NUM; i++) {
+    (function(idx) {
+
+      // Direct click always whacks immediately
+      moleEl(idx).addEventListener('click', () => whack(idx));
+
+      // Gaze enter → start dwell countdown
+      moleEl(idx).addEventListener('mouseenter', () => {
+        if (!active || !up[idx]) return;
+        // Highlight mole head yellow
+        const heads = moleEl(idx).querySelectorAll('a-sphere');
+        if (heads[0]) heads[0].setAttribute('color', '#ffcc44');
+        startDwell(idx);
+      });
+
+      // Gaze leave → cancel dwell
+      moleEl(idx).addEventListener('mouseleave', () => {
+        // Restore mole head colour
+        const heads = moleEl(idx).querySelectorAll('a-sphere');
+        if (heads[0]) heads[0].setAttribute('color', '#A0522D');
+        clearDwell(idx);
+        stopGazeBar();
+      });
+
+    })(i);
+  }
+
+  // VR controller triggers
+  ['lc', 'rc'].forEach(function(id) {
+    document.getElementById(id).addEventListener('triggerdown', function() {
+      if (!active) return;
+      const ray = document.getElementById(id).components.raycaster;
+      if (ray && ray.intersectedEls.length > 0) {
+        let el = ray.intersectedEls[0];
+        while (el && el.dataset && el.dataset.hole === undefined) el = el.parentElement;
+        if (el) whack(parseInt(el.dataset.hole));
+      }
+    });
+  });
+
+  // ── Game flow ──────────────────────────────────────────────
+  function startGame() {
+    overlay.style.display = 'none';
+    score = 0; timeLeft = 30; active = true;
+    statHits = 0; statMiss = 0;
+    scoreEl.textContent = 0;
+    timerEl.textContent = 30;
+    timerBox.classList.remove('urgent');
+    updateStats();
+    timeouts.forEach(clearTimeout); timeouts = [];
+    for (let i = 0; i < NUM; i++) lower(i, true);
+    schedule();
+    timerInt = setInterval(function() {
+      timeLeft--;
+      timerEl.textContent = timeLeft;
+      if (timeLeft <= 10) timerBox.classList.add('urgent');
+      if (timeLeft <= 0)  endGame();
+    }, 1000);
+  }
+
+  function endGame() {
+    active = false;
+    clearInterval(timerInt);
+    timeouts.forEach(clearTimeout); timeouts = [];
+    for (let i = 0; i < NUM; i++) lower(i, true);
+    stopGazeBar();
+
+    const total = statHits + statMiss;
+    const acc   = total > 0 ? Math.round(statHits / total * 100) + '%' : '—';
+
+    overlay.className = 'gameover';
+    overlay.innerHTML =
+      '<h1>SESSION COMPLETE</h1>' +
+      '<p class="sub" style="margin-top:10px;">FINAL SCORE</p>' +
+      '<p class="val">' + score + ' pts</p>' +
+      '<p class="sub" style="margin-top:12px;color:#444;">' +
+        'Hits: ' + statHits + ' &nbsp;|&nbsp; Accuracy: ' + acc +
+      '</p>' +
+      '<button onclick="startGame()">NEW SESSION</button>';
+    overlay.style.display = 'flex';
+  }
+</script>
+
+</body>
+</html>
